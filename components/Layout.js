@@ -2,40 +2,33 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 
-export default function Layout({ children }) {
+export default function Layout({ children, activeTab }) {
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [siteId, setSiteId] = useState('');
-  const [siteList, setSiteList] = useState([]);
+  const [siteList, setSiteList] = useState([{ id: 'default', name: 'デフォルト' }]);
 
   useEffect(() => {
-    const stored = localStorage.getItem('adtrack_site_id');
-    if (stored) setSiteId(stored);
-
-    // Load site list from localStorage or default
-    const sites = localStorage.getItem('adtrack_sites');
+    const stored = localStorage.getItem('adtrack_rt_site_id');
+    const sites = localStorage.getItem('adtrack_rt_sites');
     if (sites) {
-      setSiteList(JSON.parse(sites));
+      const parsed = JSON.parse(sites);
+      setSiteList(parsed);
+      setSiteId(stored || parsed[0]?.id || 'default');
     } else {
-      const defaultSites = [
-        { id: 'site_001', name: 'Site 1' },
-        { id: 'site_002', name: 'Site 2' },
-      ];
-      setSiteList(defaultSites);
-      localStorage.setItem('adtrack_sites', JSON.stringify(defaultSites));
-    }
-    if (!stored && siteList.length > 0) {
-      setSiteId(siteList[0].id);
+      const defaults = [{ id: 'default', name: 'デフォルト' }];
+      setSiteList(defaults);
+      setSiteId(stored || 'default');
     }
   }, []);
 
   const handleSiteChange = (e) => {
-    const newSiteId = e.target.value;
-    setSiteId(newSiteId);
-    localStorage.setItem('adtrack_site_id', newSiteId);
+    const val = e.target.value;
+    setSiteId(val);
+    localStorage.setItem('adtrack_rt_site_id', val);
+    router.reload();
   };
 
-  const navItems = [
+  const tabs = [
     { label: 'ダッシュボード', href: '/' },
     { label: 'セッション一覧', href: '/report/sessions' },
     { label: 'ページ別', href: '/report/pages' },
@@ -43,193 +36,151 @@ export default function Layout({ children }) {
     { label: 'イベント', href: '/report/events' },
   ];
 
-  const isActive = (href) => {
-    return router.pathname === href;
-  };
+  const currentPath = router.pathname;
 
   return (
-    <div style={styles.container}>
-      {/* Header */}
-      <header style={styles.header}>
-        <div style={styles.headerContent}>
-          <button
-            style={styles.sidebarToggle}
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-          >
-            ☰
-          </button>
-          <h1 style={styles.logo}>adtrack-rt</h1>
-          <div style={styles.siteSelector}>
-            <label style={styles.siteLabel}>サイト:</label>
-            <select
-              value={siteId}
-              onChange={handleSiteChange}
-              style={styles.select}
-            >
-              {siteList.map((site) => (
-                <option key={site.id} value={site.id}>
-                  {site.name}
-                </option>
+    <div style={s.wrap}>
+      {/* ヘッダー */}
+      <header style={s.header}>
+        <div style={s.headerInner}>
+          <div style={s.brand}>
+            <span style={s.brandText}>adtrack-rt</span>
+            <span style={s.headerSub}>リアルタイムアクセス計測</span>
+          </div>
+          <div style={s.headerRight}>
+            <label style={s.siteLabel}>サイト：</label>
+            <select value={siteId} onChange={handleSiteChange} style={s.siteSelect}>
+              {siteList.map(site => (
+                <option key={site.id} value={site.id}>{site.name}</option>
               ))}
             </select>
           </div>
         </div>
       </header>
 
-      <div style={styles.main}>
-        {/* Sidebar */}
-        <aside
-          style={{
-            ...styles.sidebar,
-            transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
-          }}
-        >
-          <nav style={styles.nav}>
-            {navItems.map((item) => (
-              <Link key={item.href} href={item.href}>
-                <a
-                  style={{
-                    ...styles.navItem,
-                    ...(isActive(item.href) ? styles.navItemActive : {}),
-                  }}
-                >
-                  {item.label}
-                </a>
-              </Link>
-            ))}
-          </nav>
-        </aside>
+      {/* タブナビゲーション */}
+      <nav style={s.tabBar}>
+        <div style={s.tabInner}>
+          {tabs.map(tab => (
+            <Link key={tab.href} href={tab.href} style={{
+              ...s.tab,
+              ...(currentPath === tab.href ? s.tabActive : {}),
+            }}>
+              {tab.label}
+            </Link>
+          ))}
+        </div>
+      </nav>
 
-        {/* Content */}
-        <main style={styles.content}>{children}</main>
-      </div>
+      {/* コンテンツ */}
+      <main style={s.content}>
+        <div style={s.inner}>
+          {children}
+        </div>
+      </main>
 
-      {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div
-          style={styles.overlay}
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
+      {/* フッター */}
+      <footer style={s.footer}>
+        adtrack-rt — GA4非依存リアルタイム計測
+      </footer>
     </div>
   );
 }
 
-const styles = {
-  container: {
+const s = {
+  wrap: {
     display: 'flex',
     flexDirection: 'column',
     minHeight: '100vh',
-    backgroundColor: '#f5f5f5',
-    fontFamily: 'sans-serif',
+    backgroundColor: '#edf2f7',
   },
   header: {
     backgroundColor: '#1a8fc1',
     color: 'white',
-    padding: '0 20px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-    position: 'sticky',
-    top: 0,
-    zIndex: 100,
+    boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
   },
-  headerContent: {
+  headerInner: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     maxWidth: '1400px',
     margin: '0 auto',
-    width: '100%',
-    padding: '12px 0',
+    padding: '0 20px',
+    height: '48px',
   },
-  sidebarToggle: {
-    backgroundColor: 'transparent',
-    border: 'none',
-    color: 'white',
-    fontSize: '24px',
-    cursor: 'pointer',
-    marginRight: '15px',
-    display: 'none',
+  brand: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
   },
-  logo: {
-    margin: '0',
-    fontSize: '20px',
-    fontWeight: '600',
-    flex: 1,
+  brandText: {
+    fontSize: '18px',
+    fontWeight: '700',
+    letterSpacing: '0.5px',
   },
-  siteSelector: {
+  headerSub: {
+    fontSize: '12px',
+    opacity: 0.8,
+  },
+  headerRight: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
   },
   siteLabel: {
-    fontSize: '14px',
-    fontWeight: '500',
+    fontSize: '13px',
+    opacity: 0.9,
   },
-  select: {
-    padding: '6px 10px',
+  siteSelect: {
+    padding: '4px 8px',
     borderRadius: '4px',
     border: 'none',
-    backgroundColor: 'white',
+    backgroundColor: 'rgba(255,255,255,0.9)',
     color: '#333',
+    fontSize: '13px',
     cursor: 'pointer',
-    fontSize: '14px',
   },
-  main: {
+  tabBar: {
+    backgroundColor: 'white',
+    borderBottom: '1px solid #dde3ea',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+  },
+  tabInner: {
     display: 'flex',
-    flex: 1,
     maxWidth: '1400px',
     margin: '0 auto',
-    width: '100%',
+    padding: '0 20px',
   },
-  sidebar: {
-    width: '250px',
-    backgroundColor: 'white',
-    borderRight: '1px solid #e0e0e0',
-    padding: '20px 0',
-    transition: 'transform 0.3s ease',
-    position: 'relative',
-    zIndex: 50,
-  },
-  nav: {
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  navItem: {
-    padding: '12px 20px',
-    color: '#333',
-    textDecoration: 'none',
-    fontSize: '14px',
-    borderLeft: '3px solid transparent',
-    transition: 'all 0.2s ease',
-  },
-  navItemActive: {
-    borderLeftColor: '#1a8fc1',
-    backgroundColor: '#f0f7fb',
-    color: '#1a8fc1',
+  tab: {
+    display: 'inline-block',
+    padding: '12px 18px',
+    fontSize: '13px',
     fontWeight: '500',
+    color: '#555',
+    borderBottom: '3px solid transparent',
+    whiteSpace: 'nowrap',
+    transition: 'color 0.15s, border-color 0.15s',
+    textDecoration: 'none',
+  },
+  tabActive: {
+    color: '#1a8fc1',
+    borderBottomColor: '#1a8fc1',
+    fontWeight: '600',
   },
   content: {
     flex: 1,
-    padding: '20px',
-    overflowY: 'auto',
+    padding: '24px 20px',
   },
-  overlay: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    zIndex: 40,
+  inner: {
+    maxWidth: '1400px',
+    margin: '0 auto',
+  },
+  footer: {
+    textAlign: 'center',
+    padding: '12px',
+    fontSize: '12px',
+    color: '#aaa',
+    borderTop: '1px solid #e0e0e0',
+    backgroundColor: 'white',
   },
 };
-
-// Responsive styles
-if (typeof window !== 'undefined' && window.innerWidth < 768) {
-  styles.sidebarToggle.display = 'block';
-  styles.sidebar.position = 'fixed';
-  styles.sidebar.height = '100vh';
-  styles.sidebar.top = '56px';
-  styles.sidebar.left = 0;
-  styles.sidebar.zIndex = 50;
-}
