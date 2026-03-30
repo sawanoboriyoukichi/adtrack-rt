@@ -1,12 +1,24 @@
-import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useState, useEffect } from 'react';
 
-export default function Layout({ children }) {
+const NAV_ITEMS = [
+  {
+    label: 'レポート集計', key: 'report',
+    children: [
+      { label: '直接効果', href: '/report/direct' },
+      { label: '期間別', href: '/report/period' },
+      { label: '時間別', href: '/report/hourly' },
+      { label: 'パラメーター別', href: '/report/params' },
+    ],
+  },
+];
+
+export default function Layout({ children, title }) {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
+  const [openMenu, setOpenMenu] = useState(null);
   const [siteId, setSiteId] = useState('default');
-  const [sites, setSites] = useState(['default']);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -19,104 +31,89 @@ export default function Layout({ children }) {
   const handleSiteChange = (e) => {
     const val = e.target.value;
     setSiteId(val);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('adtrack_site_id', val);
-    }
+    if (typeof window !== 'undefined') localStorage.setItem('adtrack_site_id', val);
   };
 
-  const tabs = [
-    { label: '直接効果', href: '/report/direct' },
-    { label: '期間別', href: '/report/period' },
-    { label: '時間別', href: '/report/hourly' },
-    { label: 'パラメーター別', href: '/report/params' },
-  ];
-
   const currentPath = router.pathname;
+  const activeNav = NAV_ITEMS.find(n =>
+    n.href ? currentPath.startsWith(n.href) : n.children?.some(c => currentPath.startsWith(c.href))
+  );
 
   return (
-    <div style={{ minHeight: '100vh', background: '#edf2f7', fontFamily: 'sans-serif' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#edf2f7', fontFamily: 'sans-serif' }}>
       {/* ヘッダー */}
-      <header style={{
-        background: '#1a8fc1',
-        color: 'white',
-        padding: '0 16px',
-        height: 48,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{
-            background: 'white',
-            color: '#1a8fc1',
-            fontWeight: 'bold',
-            fontSize: 13,
-            padding: '3px 8px',
-            borderRadius: 4,
-          }}>adtrack-rt</span>
-          <span style={{ fontSize: 13, opacity: 0.9 }}>リアルタイム広告効果測定</span>
+      <header style={{ backgroundColor: '#1a8fc1', color: 'white', padding: '0 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '48px', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ background: 'white', color: '#1a8fc1', fontWeight: 'bold', fontSize: '14px', padding: '4px 10px', borderRadius: '4px' }}>adtrack-rt</div>
+          <span style={{ fontSize: '12px', opacity: 0.8 }}>リアルタイム広告効果測定</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' }}>
           {mounted && (
             <>
-              <span style={{ fontSize: 12, opacity: 0.8 }}>サイト:</span>
-              <select
-                value={siteId}
-                onChange={handleSiteChange}
-                style={{
-                  fontSize: 12,
-                  padding: '3px 6px',
-                  borderRadius: 4,
-                  border: 'none',
-                  background: 'rgba(255,255,255,0.2)',
-                  color: 'white',
-                  cursor: 'pointer',
-                }}
-              >
-                {sites.map(s => (
-                  <option key={s} value={s} style={{ color: '#333' }}>{s}</option>
-                ))}
+              <span style={{ opacity: 0.8, fontSize: '12px' }}>サイト:</span>
+              <select value={siteId} onChange={handleSiteChange}
+                style={{ fontSize: '12px', padding: '3px 6px', borderRadius: '4px', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer' }}>
+                <option value="default" style={{ color: '#333' }}>default</option>
               </select>
             </>
           )}
         </div>
       </header>
 
-      {/* タブナビゲーション */}
-      <nav style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '0 16px' }}>
-        <div style={{ display: 'flex', maxWidth: 1400, margin: '0 auto' }}>
-          {tabs.map(tab => {
-            const isActive = currentPath === tab.href || currentPath.startsWith(tab.href);
-            return (
-              <Link
-                key={tab.href}
-                href={tab.href}
-                style={{
-                  display: 'inline-block',
-                  padding: '12px 18px',
-                  fontSize: 13,
-                  fontWeight: isActive ? '600' : 'normal',
-                  color: isActive ? '#1a8fc1' : '#555',
-                  textDecoration: 'none',
-                  borderBottom: isActive ? '2px solid #1a8fc1' : '2px solid transparent',
-                  marginBottom: -1,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {tab.label}
-              </Link>
-            );
-          })}
-        </div>
+      {/* ナビゲーション */}
+      <nav style={{ backgroundColor: '#2aa5d8', display: 'flex', alignItems: 'stretch', position: 'relative' }}>
+        {NAV_ITEMS.map(item => {
+          const isActive = item === activeNav;
+          return (
+            <div key={item.key} style={{ position: 'relative' }}
+              onMouseEnter={() => item.children && setOpenMenu(item.key)}
+              onMouseLeave={() => setOpenMenu(null)}>
+              {item.href ? (
+                <Link href={item.href} style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', color: 'white', textDecoration: 'none', fontSize: '14px', fontWeight: isActive ? 'bold' : 'normal', backgroundColor: isActive ? 'rgba(0,0,0,0.2)' : 'transparent', borderBottom: isActive ? '3px solid white' : '3px solid transparent' }}>
+                  {item.label}
+                </Link>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', color: 'white', fontSize: '14px', fontWeight: isActive ? 'bold' : 'normal', backgroundColor: isActive ? 'rgba(0,0,0,0.2)' : 'transparent', borderBottom: isActive ? '3px solid white' : '3px solid transparent', cursor: 'pointer', userSelect: 'none' }}>
+                  {item.label} ▾
+                </div>
+              )}
+              {item.children && openMenu === item.key && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, backgroundColor: 'white', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '160px', zIndex: 100, borderTop: '3px solid #1a8fc1' }}>
+                  {item.children.map(child => (
+                    <Link key={child.href} href={child.href}
+                      style={{ display: 'block', padding: '10px 16px', color: currentPath === child.href ? '#1a8fc1' : '#333', textDecoration: 'none', fontSize: '13px', fontWeight: currentPath === child.href ? 'bold' : 'normal', backgroundColor: currentPath === child.href ? '#e8f4fb' : 'transparent', borderLeft: currentPath === child.href ? '3px solid #1a8fc1' : '3px solid transparent' }}
+                      onMouseOver={e => e.currentTarget.style.backgroundColor = '#f0f8ff'}
+                      onMouseOut={e => e.currentTarget.style.backgroundColor = currentPath === child.href ? '#e8f4fb' : 'transparent'}>
+                      {child.label}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </nav>
 
-      {/* コンテンツ */}
-      <main style={{ maxWidth: 1400, margin: '0 auto', padding: '20px 16px' }}>
+      {/* サブナビ（パンくず風タブ） */}
+      {activeNav?.children && (
+        <div style={{ backgroundColor: 'white', borderBottom: '1px solid #ddd', padding: '0 20px', display: 'flex', gap: '0' }}>
+          {activeNav.children.map(child => (
+            <Link key={child.href} href={child.href}
+              style={{ display: 'inline-block', padding: '10px 18px', fontSize: '13px', color: currentPath === child.href ? '#1a8fc1' : '#555', textDecoration: 'none', borderBottom: currentPath === child.href ? '3px solid #1a8fc1' : '3px solid transparent', fontWeight: currentPath === child.href ? 'bold' : 'normal' }}>
+              {child.label}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {/* メインコンテンツ */}
+      <main style={{ padding: '24px 24px', maxWidth: '1400px', margin: '0 auto' }}>
+        {title && <h1 style={{ fontSize: '18px', fontWeight: 'bold', color: '#333', marginBottom: '20px' }}>{title}</h1>}
         {children}
       </main>
 
-      <footer style={{ textAlign: 'center', padding: '24px 0', fontSize: 12, color: '#999' }}>
-        adtrack-rt © {new Date().getFullYear()}
+      <footer style={{ textAlign: 'center', padding: '16px', fontSize: '11px', color: '#999', borderTop: '1px solid #e0e0e0', backgroundColor: 'white', marginTop: '40px' }}>
+        Copyright © 2025 adtrack-rt
       </footer>
     </div>
   );
