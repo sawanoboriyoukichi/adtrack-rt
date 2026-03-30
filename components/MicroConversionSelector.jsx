@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+// rebuild trigger
 const SYSTEM_EVENTS = new Set([
   'session_start', 'first_visit', 'user_engagement', 'page_view',
   'gtm.dom', 'gtm.load', 'gtm.js', 'gtm.click', 'gtm.linkClick',
