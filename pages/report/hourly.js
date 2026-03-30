@@ -81,6 +81,8 @@ function HourlyChart({ rows, peakHour }) {
   );
 }
 
+const CV_COLORS = ['#e8771e', '#c75393', '#2196f3', '#4caf50', '#9c27b0', '#ff5722'];
+
 export default function HourlyReport() {
   const [mounted, setMounted] = useState(false);
   const [siteId, setSiteId] = useState('default');
@@ -92,6 +94,11 @@ export default function HourlyReport() {
   const [filterSource, setFilterSource] = useState('');
   const [filterMedium, setFilterMedium] = useState('');
 
+  // マイクロCV
+  const [allEventNames, setAllEventNames] = useState([]);
+  const [selectedEvents, setSelectedEvents] = useState([]);
+  const [showCvDropdown, setShowCvDropdown] = useState(false);
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -99,34 +106,62 @@ export default function HourlyReport() {
   useEffect(() => {
     setMounted(true);
     const saved = typeof window !== 'undefined' ? localStorage.getItem('adtrack_site_id') : null;
-    setSiteId(saved || 'default');
+    const sid = saved || 'default';
+    setSiteId(sid);
     const dates = getPresetDates('直近28日');
     setFrom(dates.from); setTo(dates.to);
     setCustomFrom(dates.from); setCustomTo(dates.to);
+
+    // イベント名取得
+    fetch(`/api/report?type=event_names&site_id=${sid}`)
+      .then(r => r.json())
+      .then(d => {
+        const names = d.event_names || [];
+        setAllEventNames(names);
+        const savedEvents = typeof window !== 'undefined' ? localStorage.getItem('adtrack_selected_events') : null;
+        if (savedEvents) {
+          const parsed = JSON.parse(savedEvents);
+          setSelectedEvents(parsed.filter(e => names.includes(e)));
+        } else {
+          setSelectedEvents(names.slice(0, 3));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const fetchData = useCallback(async () => {
     if (!from || !to) return;
     setLoading(true); setError('');
     try {
-      const url = `/api/report?type=hourly&site_id=${siteId}&from=${from}&to=${to}&utm_source=${encodeURIComponent(filterSource)}&utm_medium=${encodeURIComponent(filterMedium)}`;
+      const evParam = selectedEvents.join(',');
+      const url = `/api/report?type=hourly&site_id=${siteId}&from=${from}&to=${to}&utm_source=${encodeURIComponent(filterSource)}&utm_medium=${encodeURIComponent(filterMedium)}&events=${encodeURIComponent(evParam)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error();
       setData(await res.json());
     } catch {
       setError('データ取得に失敗しました');
     } finally { setLoading(false); }
-  }, [siteId, from, to, filterSource, filterMedium]);
+  }, [siteId, from, to, filterSource, filterMedium, selectedEvents]);
 
   useEffect(() => {
     if (mounted && from && to) fetchData();
-  }, [mounted, from, to]);
+  }, [mounted, from, to, selectedEvents]);
 
   const handlePreset = (p) => {
     setPreset(p);
     const dates = getPresetDates(p);
     setFrom(dates.from); setTo(dates.to);
     setCustomFrom(dates.from); setCustomTo(dates.to);
+  };
+
+  const toggleEvent = (evName) => {
+    const next = selectedEvents.includes(evName)
+      ? selectedEvents.filter(e => e !== evName)
+      : [...selectedEvents, evName];
+    setSelectedEvents(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('adtrack_selected_events', JSON.stringify(next));
+    }
   };
 
   const s = {
@@ -169,11 +204,56 @@ export default function HourlyReport() {
             style={{ fontSize: 13, padding: '4px 8px', border: '1px solid #ccc', borderRadius: 4, width: 160 }} />
           <button onClick={fetchData} style={{ ...s.btn, background: '#1a8fc1', color: 'white', border: 'none' }}>適用</button>
         </div>
+
+        {/* CV選択ドロップダウン */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          <span style={{ fontSize: 13, color: '#555' }}>マイクロCV：</span>
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowCvDropdown(v => !v)}
+              style={{ ...s.btn, background: '#1a8fc1', color: 'white', border: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              📊 マイクロCV選択 {selectedEvents.length > 0 && <span style={{ background: 'rgba(255,255,255,0.3)', borderRadius: 10, padding: '1px 6px', fontSize: 11 }}>{selectedEvents.length}</span>} ▼
+            </button>
+            {showCvDropdown && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, zIndex: 100, background: 'white',
+                border: '1px solid #ccc', borderRadius: 6, padding: 8, minWidth: 220, boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              }}>
+                {allEventNames.length === 0
+                  ? <div style={{ fontSize: 13, color: '#999', padding: '4px 8px' }}>イベントなし</div>
+                  : allEventNames.map(ev => (
+                    <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', cursor: 'pointer', borderRadius: 4 }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedEvents.includes(ev)}
+                        onChange={() => toggleEvent(ev)}
+                      />
+                      <span style={{ fontSize: 13 }}>{ev}</span>
+                    </label>
+                  ))
+                }
+              </div>
+            )}
+          </div>
+          {/* 選択中CVタグ */}
+          {selectedEvents.map((ev, i) => (
+            <span key={ev} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12,
+              background: `${CV_COLORS[i % CV_COLORS.length]}22`,
+              border: `1px solid ${CV_COLORS[i % CV_COLORS.length]}`,
+              color: CV_COLORS[i % CV_COLORS.length], borderRadius: 12, padding: '2px 8px',
+            }}>
+              {ev}
+              <span onClick={() => toggleEvent(ev)} style={{ cursor: 'pointer', fontWeight: 'bold' }}>×</span>
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* サマリーカード */}
       {data && (
-        <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           <div style={{ ...s.card, flex: '0 0 auto', minWidth: 150, marginBottom: 0 }}>
             <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>総セッション数</div>
             <div style={{ fontSize: 28, fontWeight: 'bold', color: '#2d3748' }}>{data.totalSessions?.toLocaleString()}</div>
@@ -183,6 +263,17 @@ export default function HourlyReport() {
             <div style={{ fontSize: 28, fontWeight: 'bold', color: '#e8771e' }}>{data.peakHour}</div>
             <div style={{ fontSize: 13, color: '#888' }}>{data.peakCount}件</div>
           </div>
+          {selectedEvents.map((ev, i) => (
+            <div key={ev} style={{ ...s.card, flex: '0 0 auto', minWidth: 130, marginBottom: 0, borderTop: `3px solid ${CV_COLORS[i % CV_COLORS.length]}` }}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>{ev}</div>
+              <div style={{ fontSize: 24, fontWeight: 'bold', color: CV_COLORS[i % CV_COLORS.length] }}>
+                {(data.totalCv?.[ev] || 0)} <span style={{ fontSize: 13, fontWeight: 'normal' }}>件</span>
+              </div>
+              <div style={{ fontSize: 12, color: CV_COLORS[i % CV_COLORS.length] }}>
+                CVR {data.totalSessions > 0 ? (((data.totalCv?.[ev] || 0) / data.totalSessions) * 100).toFixed(2) : '0.00'}%
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

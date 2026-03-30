@@ -193,6 +193,21 @@ export default async function handler(req, res) {
       const { data: sessions, error: sessErr } = await sessQuery;
       if (sessErr) throw sessErr;
 
+      let cvMap = {};
+      if (eventList.length > 0) {
+        const { data: evData } = await db
+          .from('events')
+          .select('session_id, event_name')
+          .eq('site_id', site_id)
+          .gte('occurred_at', startDate)
+          .lte('occurred_at', endDate)
+          .in('event_name', eventList);
+        (evData || []).forEach(ev => {
+          if (!cvMap[ev.session_id]) cvMap[ev.session_id] = new Set();
+          cvMap[ev.session_id].add(ev.event_name);
+        });
+      }
+
       const hourMap = {};
       for (let h = 0; h < 24; h++) hourMap[h] = 0;
 
@@ -205,6 +220,14 @@ export default async function handler(req, res) {
       const totalSessions = Object.values(hourMap).reduce((a, b) => a + b, 0);
       const maxEntry = Object.entries(hourMap).sort((a, b) => b[1] - a[1])[0];
 
+      const totalCv = {};
+      eventList.forEach(ev => {
+        totalCv[ev] = (sessions || []).reduce((s, sess) => {
+          const evSet = cvMap[sess.session_id];
+          return s + (evSet && evSet.has(ev) ? 1 : 0);
+        }, 0);
+      });
+
       const rows = Object.entries(hourMap).map(([h, cnt]) => ({
         hour: String(h).padStart(2, '0') + ':00',
         sessions: cnt,
@@ -214,6 +237,7 @@ export default async function handler(req, res) {
       return res.json({
         rows,
         totalSessions,
+        totalCv,
         peakHour: maxEntry ? String(maxEntry[0]).padStart(2, '0') + ':00' : '00:00',
         peakCount: maxEntry ? maxEntry[1] : 0,
       });
