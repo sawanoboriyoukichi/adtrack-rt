@@ -1,5 +1,8 @@
-// Middleware for adtrack-rt
-// Currently no authentication middleware required
+import { NextResponse } from 'next/server';
+
+export function middleware(request) {
+  return NextResponse.next();
+}
 
 export const config = {
   matcher: ['/report/:path*'],
