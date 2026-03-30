@@ -1,200 +1,298 @@
 import { getServiceSupabase } from '../../lib/supabase';
 
+// 日付範囲をISO文字列に変換（00:00:00 〜 23:59:59）
+function dateRange(from, to) {
+  const startDate = from
+    ? `${from}T00:00:00.000Z`
+    : new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
+  const endDate = to
+    ? `${to}T23:59:59.999Z`
+    : new Date().toISOString();
+  return { startDate, endDate };
+}
+
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { type, site_id = 'default', start, end, limit = 500 } = req.query;
-  const db = getServiceSupabase();
+  const {
+    type,
+    site_id = 'default',
+    from,
+    to,
+    events = '',
+    utm_source = '',
+    utm_medium = '',
+    search = '',
+    dimension = 'source',
+  } = req.query;
 
-  // 日付範囲のデフォルト（過去28日）
-  const endDate = end || new Date().toISOString();
-  const startDate = start || new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
+  const db = getServiceSupabase();
+  const { startDate, endDate } = dateRange(from, to);
+  const eventList = events ? events.split(',').map(e => e.trim()).filter(Boolean) : [];
 
   try {
-    if (type === 'summary') {
-      // サマリー統計
-      const { data: sessions, error } = await db
-        .from('sessions')
-        .select('session_id, visitor_id, is_bounce, page_count, duration_seconds')
-        .eq('site_id', site_id)
-        .gte('started_at', startDate)
-        .lte('started_at', endDate);
-
-      if (error) throw error;
-
-      const totalSessions = sessions.length;
-      const uniqueVisitors = new Set(sessions.map(s => s.visitor_id)).size;
-      const bounces = sessions.filter(s => s.is_bounce).length;
-      const bounceRate = totalSessions > 0 ? ((bounces / totalSessions) * 100).toFixed(1) : '0.0';
-      const totalPageviews = sessions.reduce((s, r) => s + (r.page_count || 0), 0);
-      const avgDuration = totalSessions > 0
-        ? Math.round(sessions.reduce((s, r) => s + (r.duration_seconds || 0), 0) / totalSessions)
-        : 0;
-
-      return res.json({ totalSessions, uniqueVisitors, bounceRate, totalPageviews, avgDuration });
-    }
-
-    if (type === 'sessions') {
-      // セッション一覧
-      const { data, error } = await db
-        .from('sessions')
-        .select('*')
-        .eq('site_id', site_id)
-        .gte('started_at', startDate)
-        .lte('started_at', endDate)
-        .order('started_at', { ascending: false })
-        .limit(parseInt(limit));
-
-      if (error) throw error;
-      return res.json(data);
-    }
-
-    if (type === 'pageviews') {
-      // ページ別集計
-      const { data, error } = await db
-        .from('pageviews')
-        .select('page_url, page_title, session_id')
-        .eq('site_id', site_id)
-        .gte('viewed_at', startDate)
-        .lte('viewed_at', endDate);
-
-      if (error) throw error;
-
-      const pageMap = {};
-      data.forEach(pv => {
-        const url = pv.page_url;
-        if (!pageMap[url]) pageMap[url] = { page_url: url, page_title: pv.page_title, views: 0, sessions: new Set() };
-        pageMap[url].views++;
-        pageMap[url].sessions.add(pv.session_id);
-      });
-
-      const result = Object.values(pageMap)
-        .map(p => ({ page_url: p.page_url, page_title: p.page_title, views: p.views, unique_sessions: p.sessions.size }))
-        .sort((a, b) => b.views - a.views);
-
-      return res.json(result);
-    }
-
-    if (type === 'events') {
-      // イベント集計
+    // type=event_names: イベント名一覧
+    if (type === 'event_names') {
       const { data, error } = await db
         .from('events')
-        .select('event_name, event_category, event_label, session_id, visitor_id')
-        .eq('site_id', site_id)
-        .gte('occurred_at', startDate)
-        .lte('occurred_at', endDate);
-
+        .select('event_name')
+        .eq('site_id', site_id);
       if (error) throw error;
-
-      const eventMap = {};
-      data.forEach(ev => {
-        const key = ev.event_name;
-        if (!eventMap[key]) eventMap[key] = { event_name: key, count: 0, unique_visitors: new Set(), sessions: new Set() };
-        eventMap[key].count++;
-        eventMap[key].unique_visitors.add(ev.visitor_id);
-        eventMap[key].sessions.add(ev.session_id);
-      });
-
-      const result = Object.values(eventMap)
-        .map(e => ({ event_name: e.event_name, count: e.count, unique_visitors: e.unique_visitors.size, unique_sessions: e.sessions.size }))
-        .sort((a, b) => b.count - a.count);
-
-      return res.json(result);
+      const names = [...new Set((data || []).map(e => e.event_name))].sort();
+      return res.json({ event_names: names });
     }
 
-    if (type === 'eventsbyattribution') {
-      // アトリビューション別イベント
-      const { data: sessions } = await db
+    // type=direct: 直接効果レポート（ソース/メディア/キャンペーン別）
+    if (type === 'direct') {
+      let sessQuery = db
         .from('sessions')
-        .select('session_id, utm_source, utm_medium, utm_campaign, utm_term, utm_content')
+        .select('session_id, utm_source, utm_medium, utm_campaign, is_bounce')
         .eq('site_id', site_id)
         .gte('started_at', startDate)
         .lte('started_at', endDate);
+      if (utm_source) sessQuery = sessQuery.eq('utm_source', utm_source);
+      if (utm_medium) sessQuery = sessQuery.eq('utm_medium', utm_medium);
 
-      const sessionMap = {};
-      (sessions || []).forEach(s => { sessionMap[s.session_id] = s; });
+      const { data: sessions, error: sessErr } = await sessQuery;
+      if (sessErr) throw sessErr;
 
-      const { data: events } = await db
-        .from('events')
-        .select('event_name, session_id')
-        .eq('site_id', site_id)
-        .gte('occurred_at', startDate)
-        .lte('occurred_at', endDate);
+      let cvMap = {};
+      if (eventList.length > 0) {
+        const { data: evData } = await db
+          .from('events')
+          .select('session_id, event_name')
+          .eq('site_id', site_id)
+          .gte('occurred_at', startDate)
+          .lte('occurred_at', endDate)
+          .in('event_name', eventList);
+        (evData || []).forEach(ev => {
+          if (!cvMap[ev.session_id]) cvMap[ev.session_id] = new Set();
+          cvMap[ev.session_id].add(ev.event_name);
+        });
+      }
 
-      const result = (events || []).map(ev => {
-        const sess = sessionMap[ev.session_id] || {};
-        return {
-          eventName: ev.event_name,
-          source: sess.utm_source || '(direct)',
-          medium: sess.utm_medium || '(none)',
-          campaign: sess.utm_campaign || '(not set)',
-          term: sess.utm_term || '(not set)',
-          content: sess.utm_content || '(not set)',
-          count: 1,
-        };
+      const groups = {};
+      (sessions || []).forEach(s => {
+        const src = s.utm_source || '(direct)';
+        const med = s.utm_medium || (s.utm_source ? 'referral' : '(none)');
+        const cmp = s.utm_campaign || '(not set)';
+        const key = `${src}|||${med}|||${cmp}`;
+        if (!groups[key]) {
+          groups[key] = { source: src, medium: med, campaign: cmp, sessions: 0, bounces: 0, cvCounts: {} };
+          eventList.forEach(ev => { groups[key].cvCounts[ev] = 0; });
+        }
+        groups[key].sessions++;
+        if (s.is_bounce) groups[key].bounces++;
+        const evSet = cvMap[s.session_id];
+        if (evSet) {
+          eventList.forEach(ev => { if (evSet.has(ev)) groups[key].cvCounts[ev]++; });
+        }
       });
 
-      return res.json(result);
-    }
+      let rows = Object.values(groups);
+      if (search) {
+        const q = search.toLowerCase();
+        rows = rows.filter(r =>
+          r.source.toLowerCase().includes(q) ||
+          r.medium.toLowerCase().includes(q) ||
+          r.campaign.toLowerCase().includes(q)
+        );
+      }
 
-    if (type === 'params') {
-      // パラメーター別セッション集計
-      const { data, error } = await db
-        .from('sessions')
-        .select('utm_source, utm_medium, utm_campaign, utm_term, utm_content, is_bounce, page_count, duration_seconds')
-        .eq('site_id', site_id)
-        .gte('started_at', startDate)
-        .lte('started_at', endDate);
+      const totalSessions = rows.reduce((s, r) => s + r.sessions, 0);
+      const totalCv = {};
+      eventList.forEach(ev => {
+        totalCv[ev] = rows.reduce((s, r) => s + (r.cvCounts[ev] || 0), 0);
+      });
 
-      if (error) throw error;
-
-      const result = (data || []).map(s => ({
-        source: s.utm_source || '(direct)',
-        medium: s.utm_medium || '(none)',
-        campaign: s.utm_campaign || '(not set)',
-        term: s.utm_term || '(not set)',
-        content: s.utm_content || '(not set)',
-        sessions: 1,
-        bounceRate: s.is_bounce ? '100.0' : '0.0',
+      const result = rows.sort((a, b) => b.sessions - a.sessions).map(r => ({
+        source: r.source,
+        medium: r.medium,
+        campaign: r.campaign,
+        sessions: r.sessions,
+        bounceRate: r.sessions > 0 ? ((r.bounces / r.sessions) * 100).toFixed(1) : '0.0',
+        cv: r.cvCounts,
       }));
 
-      return res.json(result);
+      return res.json({ rows: result, totalSessions, totalCv, uniqueSources: Object.keys(groups).length });
     }
 
-    if (type === 'timeline') {
-      // 日別セッション推移
-      const { data, error } = await db
+    // type=period: 期間別レポート
+    if (type === 'period') {
+      let sessQuery = db
         .from('sessions')
-        .select('started_at, visitor_id, is_bounce')
+        .select('session_id, started_at, is_bounce')
         .eq('site_id', site_id)
         .gte('started_at', startDate)
         .lte('started_at', endDate)
         .order('started_at', { ascending: true });
+      if (utm_source) sessQuery = sessQuery.eq('utm_source', utm_source);
+      if (utm_medium) sessQuery = sessQuery.eq('utm_medium', utm_medium);
 
-      if (error) throw error;
+      const { data: sessions, error: sessErr } = await sessQuery;
+      if (sessErr) throw sessErr;
+
+      let evByDate = {};
+      if (eventList.length > 0 && (sessions || []).length > 0) {
+        const { data: evData } = await db
+          .from('events')
+          .select('session_id, event_name, occurred_at')
+          .eq('site_id', site_id)
+          .gte('occurred_at', startDate)
+          .lte('occurred_at', endDate)
+          .in('event_name', eventList);
+
+        const sessDateMap = {};
+        (sessions || []).forEach(s => { sessDateMap[s.session_id] = s.started_at.substring(0, 10); });
+
+        const counted = new Set();
+        (evData || []).forEach(ev => {
+          const date = sessDateMap[ev.session_id];
+          if (!date) return;
+          const key = `${ev.session_id}|${ev.event_name}`;
+          if (counted.has(key)) return;
+          counted.add(key);
+          if (!evByDate[date]) evByDate[date] = {};
+          evByDate[date][ev.event_name] = (evByDate[date][ev.event_name] || 0) + 1;
+        });
+      }
 
       const dayMap = {};
-      (data || []).forEach(s => {
-        const day = s.started_at.substring(0, 10);
-        if (!dayMap[day]) dayMap[day] = { date: day, sessions: 0, visitors: new Set(), bounces: 0 };
-        dayMap[day].sessions++;
-        dayMap[day].visitors.add(s.visitor_id);
-        if (s.is_bounce) dayMap[day].bounces++;
+      (sessions || []).forEach(s => {
+        const date = s.started_at.substring(0, 10);
+        if (!dayMap[date]) dayMap[date] = { date, sessions: 0, bounces: 0 };
+        dayMap[date].sessions++;
+        if (s.is_bounce) dayMap[date].bounces++;
       });
 
-      const result = Object.values(dayMap).map(d => ({
-        date: d.date,
-        sessions: d.sessions,
-        visitors: d.visitors.size,
-        bounceRate: d.sessions > 0 ? ((d.bounces / d.sessions) * 100).toFixed(1) : '0.0',
-      }));
+      const rows = Object.values(dayMap)
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .map(d => ({ date: d.date, sessions: d.sessions, cv: evByDate[d.date] || {} }));
 
-      return res.json(result);
+      const totalSessions = rows.reduce((s, r) => s + r.sessions, 0);
+      const totalCv = {};
+      eventList.forEach(ev => {
+        totalCv[ev] = rows.reduce((s, r) => s + (r.cv[ev] || 0), 0);
+      });
+
+      return res.json({ rows, totalSessions, totalCv });
     }
 
-    return res.status(400).json({ error: 'Invalid type. Use: summary, sessions, pageviews, events, eventsbyattribution, params, timeline' });
+    // type=hourly: 時間帯別レポート
+    if (type === 'hourly') {
+      let sessQuery = db
+        .from('sessions')
+        .select('session_id, started_at')
+        .eq('site_id', site_id)
+        .gte('started_at', startDate)
+        .lte('started_at', endDate);
+      if (utm_source) sessQuery = sessQuery.eq('utm_source', utm_source);
+      if (utm_medium) sessQuery = sessQuery.eq('utm_medium', utm_medium);
+
+      const { data: sessions, error: sessErr } = await sessQuery;
+      if (sessErr) throw sessErr;
+
+      const hourMap = {};
+      for (let h = 0; h < 24; h++) hourMap[h] = 0;
+
+      (sessions || []).forEach(s => {
+        const utcHour = new Date(s.started_at).getUTCHours();
+        const jstHour = (utcHour + 9) % 24;
+        hourMap[jstHour]++;
+      });
+
+      const totalSessions = Object.values(hourMap).reduce((a, b) => a + b, 0);
+      const maxEntry = Object.entries(hourMap).sort((a, b) => b[1] - a[1])[0];
+
+      const rows = Object.entries(hourMap).map(([h, cnt]) => ({
+        hour: String(h).padStart(2, '0') + ':00',
+        sessions: cnt,
+        pct: totalSessions > 0 ? ((cnt / totalSessions) * 100).toFixed(1) : '0.0',
+      }));
+
+      return res.json({
+        rows,
+        totalSessions,
+        peakHour: maxEntry ? String(maxEntry[0]).padStart(2, '0') + ':00' : '00:00',
+        peakCount: maxEntry ? maxEntry[1] : 0,
+      });
+    }
+
+    // type=params: パラメーター別レポート
+    if (type === 'params') {
+      const dimField = {
+        source: 'utm_source',
+        medium: 'utm_medium',
+        campaign: 'utm_campaign',
+        term: 'utm_term',
+        content: 'utm_content',
+      }[dimension] || 'utm_source';
+
+      const { data: sessions, error: sessErr } = await db
+        .from('sessions')
+        .select(`session_id, ${dimField}, is_bounce`)
+        .eq('site_id', site_id)
+        .gte('started_at', startDate)
+        .lte('started_at', endDate);
+      if (sessErr) throw sessErr;
+
+      let cvMap = {};
+      if (eventList.length > 0) {
+        const { data: evData } = await db
+          .from('events')
+          .select('session_id, event_name')
+          .eq('site_id', site_id)
+          .gte('occurred_at', startDate)
+          .lte('occurred_at', endDate)
+          .in('event_name', eventList);
+        (evData || []).forEach(ev => {
+          if (!cvMap[ev.session_id]) cvMap[ev.session_id] = new Set();
+          cvMap[ev.session_id].add(ev.event_name);
+        });
+      }
+
+      const groups = {};
+      (sessions || []).forEach(s => {
+        const val = s[dimField] || '(未設定)';
+        if (!groups[val]) {
+          groups[val] = { value: val, sessions: 0, bounces: 0, cvCounts: {} };
+          eventList.forEach(ev => { groups[val].cvCounts[ev] = 0; });
+        }
+        groups[val].sessions++;
+        if (s.is_bounce) groups[val].bounces++;
+        const evSet = cvMap[s.session_id];
+        if (evSet) {
+          eventList.forEach(ev => { if (evSet.has(ev)) groups[val].cvCounts[ev]++; });
+        }
+      });
+
+      let rows = Object.values(groups);
+      if (search) {
+        const q = search.toLowerCase();
+        rows = rows.filter(r => r.value.toLowerCase().includes(q));
+      }
+
+      const totalSessions = rows.reduce((s, r) => s + r.sessions, 0);
+      const totalCv = {};
+      eventList.forEach(ev => {
+        totalCv[ev] = rows.reduce((s, r) => s + (r.cvCounts[ev] || 0), 0);
+      });
+
+      const result = rows.sort((a, b) => b.sessions - a.sessions).map(r => ({
+        value: r.value,
+        sessions: r.sessions,
+        bounceRate: r.sessions > 0 ? ((r.bounces / r.sessions) * 100).toFixed(1) : '0.0',
+        pct: totalSessions > 0 ? ((r.sessions / totalSessions) * 100).toFixed(1) : '0.0',
+        cv: r.cvCounts,
+      }));
+
+      return res.json({ rows: result, totalSessions, totalCv });
+    }
+
+    return res.status(400).json({ error: 'Invalid type' });
   } catch (err) {
     console.error('Report API error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: err.message || 'Internal server error' });
   }
 }
